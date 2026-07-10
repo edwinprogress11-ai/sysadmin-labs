@@ -494,7 +494,7 @@ textarea { resize: vertical; min-height: 72px; }
 }
 .upload-zone:hover { border-color: var(--blue); color: var(--text2); }
 
-.upload-previews { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.upload-previews { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; width: 100%; }
 
 .up-prev {
   position: relative;
@@ -1349,7 +1349,7 @@ function handleFiles(input) {
 
 function renderPreviews() {
   document.getElementById('up-previews').innerHTML = pendingFiles.map((f, i) =>
-    `<div style="margin-bottom:8px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px;display:flex;gap:8px;align-items:center">
+    `<div style="width:100%;box-sizing:border-box;margin-bottom:8px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px;display:flex;gap:8px;align-items:center">
       <div class="up-prev" style="flex-shrink:0"><img src="${f.url}"><button class="up-rm" onclick="pendingFiles.splice(${i},1);renderPreviews()">✕</button></div>
       <input type="text" value="${esc(f.caption)}" placeholder="Caption…" style="flex:1;font-size:12px;padding:5px 8px" oninput="pendingFiles[${i}].caption=this.value">
     </div>`).join('');
