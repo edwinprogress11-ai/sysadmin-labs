@@ -845,9 +845,9 @@ textarea { resize: vertical; min-height: 72px; }
 <!-- LIGHTBOX -->
 <div class="lightbox" id="lightbox" onclick="closeLB()">
   <button class="lb-close">✕</button>
-  <div style="display:flex;flex-direction:column;align-items:center;gap:10px">
-    <img id="lb-img" src="" alt="">
-    <div id="lb-caption" style="color:#e6edf3;font-size:12px;font-family:'JetBrains Mono',monospace;text-align:center;max-width:90vw;opacity:0.8"></div>
+  <div style="display:flex;flex-direction:column;align-items:center;gap:10px;max-width:92vw">
+    <img id="lb-img" src="" alt="" style="max-width:92vw;max-height:75vh;border-radius:6px">
+    <div id="lb-caption" style="color:#e6edf3;font-size:13px;font-family:'Inter',sans-serif;text-align:center;background:rgba(0,0,0,0.5);padding:6px 14px;border-radius:20px;max-width:90vw"></div>
   </div>
 </div>
 
@@ -1132,8 +1132,19 @@ function renderLabBody(lab) {
   if (lab.screenshots?.length) {
     const thumbs = lab.screenshots.map(s => {
       let url, caption;
-      try { const obj = typeof s === 'string' && s.startsWith('{') ? JSON.parse(s) : null; url = obj ? obj.url : s; caption = obj ? obj.caption : ''; }
-      catch { url = s; caption = ''; }
+      try {
+        if (typeof s === 'string' && s.startsWith('{')) {
+          const obj = JSON.parse(s);
+          url = obj.url;
+          caption = obj.caption;
+        } else {
+          url = s;
+          // Extract caption from URL filename
+          const filename = url.split('/').pop().split('?')[0];
+          // Remove timestamp prefix (e.g. 1234567890-abc12-)
+          caption = filename.replace(/^\d+-[a-z0-9]+-/, '').replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' ');
+        }
+      } catch { url = s; caption = ''; }
       return `<div class="ss-thumb" onclick="openLB('${esc(url)}','${esc(caption)}')">
         <img src="${esc(url)}" loading="lazy">
       </div>`;
