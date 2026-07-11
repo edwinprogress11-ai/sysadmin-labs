@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SysAdmin Logs — Progress</title>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <style>
 :root {
   --bg: #0d1117;
@@ -466,7 +467,7 @@ body {
   margin-bottom: 4px;
 }
 
-input[type=text], input[type=date], input[type=url], textarea, select {
+input[type=text], input[type=date], input[type=url], input[type=password], textarea, select {
   width: 100%;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -851,6 +852,25 @@ textarea { resize: vertical; min-height: 72px; }
   </div>
 </div>
 
+<!-- LOGIN MODAL -->
+<div class="overlay" id="login-overlay">
+  <div class="modal" style="max-width:360px">
+    <div class="modal-head">
+      <div class="modal-title">// admin sign in</div>
+      <button class="modal-close" onclick="closeLoginModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="fg"><label>Email</label><input type="text" id="login-email" placeholder="you@example.com" onkeydown="if(event.key==='Enter')doLogin()"></div>
+      <div class="fg"><label>Password</label><input type="password" id="login-password" placeholder="••••••••" onkeydown="if(event.key==='Enter')doLogin()"></div>
+      <div id="login-error" style="display:none;color:var(--red);font-size:12px;margin-top:4px"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeLoginModal()">Cancel</button>
+      <button class="btn btn-primary" id="login-btn" onclick="doLogin()">Sign In</button>
+    </div>
+  </div>
+</div>
+
 <!-- TOAST -->
 <div class="toast" id="toast"></div>
 
@@ -860,58 +880,101 @@ const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const H = { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' };
 
 let labs = [], journals = [], pendingFiles = [], currentPage = 'dashboard';
-let isAdmin = false;
-const ADMIN_HASH = 'ef92b778bafe771207345f95e00f8e6e'; // MD5 of Dreamswayne
+let session = null;
+let pendingAuthCallback = null;
 
-async function md5(str) {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('').substring(0,32);
-}
+const supabaseClient = supabase.createClient(SB_URL, SB_KEY);
 
-async function checkAdmin(pw) {
-  const hash = await md5(pw);
-  // Use SHA-256 prefix comparison
-  const correct = await md5('Dreamswayne');
-  return hash === correct;
-}
+async function initAuth() {
+  const { data } = await supabaseClient.auth.getSession();
+  session = data.session;
+  updateAdminUI();
 
-function promptAdmin(callback) {
-  if (isAdmin) { callback(); return; }
-  const pw = prompt('Enter admin password:');
-  if (!pw) return;
-  checkAdmin(pw).then(ok => {
-    if (ok) {
-      isAdmin = true;
-      updateAdminUI();
-      callback();
-    } else {
-      toast('Incorrect password', 'error');
-    }
+  supabaseClient.auth.onAuthStateChange((event, newSession) => {
+    session = newSession;
+    updateAdminUI();
   });
+}
+
+function requireAuth(callback) {
+  if (session) { callback(); return; }
+  pendingAuthCallback = callback;
+  openLoginModal();
+}
+
+function openLoginModal() {
+  document.getElementById('login-email').value = '';
+  document.getElementById('login-password').value = '';
+  document.getElementById('login-error').style.display = 'none';
+  document.getElementById('login-overlay').classList.add('open');
+  setTimeout(() => document.getElementById('login-email').focus(), 100);
+}
+
+function closeLoginModal() {
+  document.getElementById('login-overlay').classList.remove('open');
+  pendingAuthCallback = null;
+}
+
+async function doLogin() {
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  const errEl = document.getElementById('login-error');
+  const btn = document.getElementById('login-btn');
+  if (!email || !password) { errEl.textContent = 'Enter email and password'; errEl.style.display = 'block'; return; }
+  btn.textContent = 'Signing in…'; btn.disabled = true;
+  try {
+    const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+    session = data.session;
+    closeLoginModal();
+    updateAdminUI();
+    toast('✓ Signed in');
+    if (pendingAuthCallback) { pendingAuthCallback(); pendingAuthCallback = null; }
+  } catch (e) {
+    errEl.textContent = 'Incorrect email or password';
+    errEl.style.display = 'block';
+  } finally {
+    btn.textContent = 'Sign In'; btn.disabled = false;
+  }
+}
+
+async function doLogout() {
+  await supabaseClient.auth.signOut();
+  session = null;
+  updateAdminUI();
+  toast('Signed out');
+}
+
+function toggleAdmin() {
+  if (session) { doLogout(); } else { openLoginModal(); }
 }
 
 function updateAdminUI() {
   const lockBtn = document.getElementById('lock-btn');
   const msLock = document.getElementById('ms-lock');
-  const icon = isAdmin ? '🔓' : '🔒';
+  const icon = session ? '🔓' : '🔒';
   if (lockBtn) lockBtn.textContent = icon;
   if (msLock) msLock.textContent = icon;
   const tr = document.getElementById('topbar-right');
   if (currentPage === 'labs') {
-    tr.innerHTML = isAdmin ? `<button class="btn btn-primary" onclick="openLabForm()">＋ New Lab Report</button>` : `<button class="btn btn-ghost" onclick="promptAdmin(()=>openLabForm())">🔒 New Lab Report</button>`;
+    tr.innerHTML = session ? `<button class="btn btn-primary" onclick="openLabForm()">＋ New Lab Report</button>` : `<button class="btn btn-ghost" onclick="requireAuth(openLabForm)">🔒 New Lab Report</button>`;
   } else if (currentPage === 'journal') {
-    tr.innerHTML = isAdmin ? `<button class="btn btn-primary" onclick="openJournalForm()">＋ New Entry</button>` : `<button class="btn btn-ghost" onclick="promptAdmin(()=>openJournalForm())">🔒 New Entry</button>`;
+    tr.innerHTML = session ? `<button class="btn btn-primary" onclick="openJournalForm()">＋ New Entry</button>` : `<button class="btn btn-ghost" onclick="requireAuth(openJournalForm)">🔒 New Entry</button>`;
   }
   const fab = document.getElementById('fab');
   if (fab && (currentPage === 'labs' || currentPage === 'journal')) {
     fab.style.display = 'flex';
-    fab.textContent = isAdmin ? '＋' : '🔒';
-    fab.onclick = isAdmin ? fabAction : () => promptAdmin(fabAction);
+    fab.textContent = session ? '＋' : '🔒';
+    fab.onclick = session ? fabAction : () => requireAuth(fabAction);
   }
+  // Re-render current lists so Edit/Delete buttons reflect auth state
+  if (labs.length || journals.length) { renderLabs(); renderJournals(); }
 }
 
 async function sb(path, opts = {}) {
-  const r = await fetch(`${SB_URL}/rest/v1/${path}`, { headers: H, ...opts });
+  const authHeader = session ? `Bearer ${session.access_token}` : `Bearer ${SB_KEY}`;
+  const headers = { ...H, 'Authorization': authHeader };
+  const r = await fetch(`${SB_URL}/rest/v1/${path}`, { headers, ...opts });
   if (!r.ok) throw new Error(await r.text());
   return r.status === 204 ? null : r.json();
 }
@@ -919,10 +982,11 @@ async function sb(path, opts = {}) {
 async function uploadImg(file) {
   const ext = file.name.split('.').pop();
   const storageName = `${Date.now()}-${Math.random().toString(36).substr(2,5)}.${ext}`;
+  const authHeader = session ? `Bearer ${session.access_token}` : `Bearer ${SB_KEY}`;
   try {
     const r = await fetch(`${SB_URL}/storage/v1/object/screenshots/${storageName}`, {
       method: 'POST',
-      headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Content-Type': file.type },
+      headers: { 'apikey': SB_KEY, 'Authorization': authHeader, 'Content-Type': file.type },
       body: file
     });
     const text = await r.text();
@@ -949,9 +1013,9 @@ function nav(page) {
 
   const tr = document.getElementById('topbar-right');
   if (page === 'labs') {
-    tr.innerHTML = isAdmin ? `<button class="btn btn-primary" onclick="openLabForm()">＋ New Lab Report</button>` : `<button class="btn btn-ghost" onclick="promptAdmin(()=>openLabForm())">🔒 New Lab Report</button>`;
+    tr.innerHTML = session ? `<button class="btn btn-primary" onclick="openLabForm()">＋ New Lab Report</button>` : `<button class="btn btn-ghost" onclick="requireAuth(openLabForm)">🔒 New Lab Report</button>`;
   } else if (page === 'journal') {
-    tr.innerHTML = isAdmin ? `<button class="btn btn-primary" onclick="openJournalForm()">＋ New Entry</button>` : `<button class="btn btn-ghost" onclick="promptAdmin(()=>openJournalForm())">🔒 New Entry</button>`;
+    tr.innerHTML = session ? `<button class="btn btn-primary" onclick="openJournalForm()">＋ New Entry</button>` : `<button class="btn btn-ghost" onclick="requireAuth(openJournalForm)">🔒 New Entry</button>`;
   } else {
     tr.innerHTML = '';
   }
@@ -959,20 +1023,10 @@ function nav(page) {
   const fab = document.getElementById('fab');
   if (page === 'labs' || page === 'journal') {
     fab.style.display = 'flex';
-    fab.textContent = isAdmin ? '＋' : '🔒';
-    fab.onclick = isAdmin ? fabAction : () => promptAdmin(fabAction);
+    fab.textContent = session ? '＋' : '🔒';
+    fab.onclick = session ? fabAction : () => requireAuth(fabAction);
   } else {
     fab.style.display = 'none';
-  }
-}
-
-function toggleAdmin() {
-  if (isAdmin) {
-    isAdmin = false;
-    updateAdminUI();
-    toast('Logged out');
-  } else {
-    promptAdmin(() => toast('✓ Admin unlocked'));
   }
 }
 
@@ -1082,7 +1136,7 @@ function renderDashboard() {
 function renderLabs() {
   const el = document.getElementById('labs-list');
   if (!labs.length) {
-    el.innerHTML = `<div class="empty"><div class="empty-icon">⚗</div><div class="empty-title">No lab reports yet</div><div class="empty-text">Document your first lab with objectives, steps, and screenshots.</div><button class="btn btn-primary" onclick="promptAdmin(()=>openLabForm())">＋ New Lab Report</button></div>`;
+    el.innerHTML = `<div class="empty"><div class="empty-icon">⚗</div><div class="empty-title">No lab reports yet</div><div class="empty-text">Document your first lab with objectives, steps, and screenshots.</div><button class="btn btn-primary" onclick="requireAuth(openLabForm)">＋ New Lab Report</button></div>`;
     return;
   }
   el.innerHTML = labs.map((lab, i) => `
@@ -1098,10 +1152,10 @@ function renderLabs() {
       ${lab.tags?.length ? `<div class="card-tags">${lab.tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''}
       <div class="card-body" id="lb-${i}">
         ${renderLabBody(lab)}
-        <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border2);display:flex;gap:8px">
-          <button class="btn btn-ghost" style="font-size:11px" onclick="promptAdmin(()=>editLab(${i}))">✏️ Edit</button>
-          <button class="btn btn-ghost" style="font-size:11px;color:var(--red)" onclick="promptAdmin(()=>deleteLab('${lab.id}'))">🗑 Delete</button>
-        </div>
+        ${session ? `<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border2);display:flex;gap:8px">
+          <button class="btn btn-ghost" style="font-size:11px" onclick="editLab(${i})">✏️ Edit</button>
+          <button class="btn btn-ghost" style="font-size:11px;color:var(--red)" onclick="deleteLab('${lab.id}')">🗑 Delete</button>
+        </div>` : ''}
       </div>
     </div>`).join('');
 }
@@ -1138,7 +1192,7 @@ function renderLabBody(lab) {
 function renderJournals() {
   const el = document.getElementById('journal-list');
   if (!journals.length) {
-    el.innerHTML = `<div class="empty"><div class="empty-icon">≡</div><div class="empty-title">No journal entries yet</div><div class="empty-text">Log what you studied today.</div><button class="btn btn-primary" onclick="promptAdmin(()=>openJournalForm())">＋ New Entry</button></div>`;
+    el.innerHTML = `<div class="empty"><div class="empty-icon">≡</div><div class="empty-title">No journal entries yet</div><div class="empty-text">Log what you studied today.</div><button class="btn btn-primary" onclick="requireAuth(openJournalForm)">＋ New Entry</button></div>`;
     return;
   }
   el.innerHTML = journals.map((j, i) => `
@@ -1153,10 +1207,10 @@ function renderJournals() {
       </div>
       <div class="card-body" id="jb-${i}">
         ${renderJournalBody(j)}
-        <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border2);display:flex;gap:8px">
-          <button class="btn btn-ghost" style="font-size:11px" onclick="promptAdmin(()=>editJournal(${i}))">✏️ Edit</button>
-          <button class="btn btn-ghost" style="font-size:11px;color:var(--red)" onclick="promptAdmin(()=>deleteJournal('${j.id}'))">🗑 Delete</button>
-        </div>
+        ${session ? `<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border2);display:flex;gap:8px">
+          <button class="btn btn-ghost" style="font-size:11px" onclick="editJournal(${i})">✏️ Edit</button>
+          <button class="btn btn-ghost" style="font-size:11px;color:var(--red)" onclick="deleteJournal('${j.id}')">🗑 Delete</button>
+        </div>` : ''}
       </div>
     </div>`).join('');
 }
@@ -1465,7 +1519,7 @@ function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-loadAll();
+initAuth().then(loadAll);
 </script>
 </body>
 </html>
